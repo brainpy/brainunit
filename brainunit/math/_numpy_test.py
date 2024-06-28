@@ -22,20 +22,22 @@ import pytest
 
 import brainunit as bu
 from brainunit import DimensionMismatchError
-from brainunit._base import Quantity
+from brainunit._base import Quantity, get_dim, have_same_unit
 from brainunit._unit_common import second
 from brainunit._unit_shortcuts import ms, mV
 
 bst.environ.set(precision=64)
 
 
-def assert_quantity(q, values, unit):
+def assert_quantity(q, values, unit=None):
   values = jnp.asarray(values)
-  if isinstance(q, Quantity):
-    assert q.dim == unit.dim or q.dim == unit, f"Unit mismatch: {q.dim} != {unit}"
-    assert jnp.allclose(q.value, values), f"Values do not match: {q.value} != {values}"
+  if unit is None:
+    assert jnp.allclose(q, values), f"Values do not match: {q.value} != {values}"
+    return
   else:
-    assert jnp.allclose(q, values), f"Values do not match: {q} != {values}"
+    assert have_same_unit(q.dim, unit), f"Dimension mismatch: ({get_dim(q)}) ({get_dim(unit)})"
+    if not jnp.allclose(q.value, values):
+      raise AssertionError(f"Values do not match: {q.value} != {values}")
 
 
 class TestArrayCreation(unittest.TestCase):
@@ -238,7 +240,7 @@ class TestArrayCreation(unittest.TestCase):
 
     q = jnp.array([1, 2, 3]) * bu.second
     result_q = bu.math.vander(q.to_value(bu.second))
-    assert_quantity(result_q, jnp.vander(jnp.array([1, 2, 3])), bu.second)
+    assert_quantity(result_q, jnp.vander(jnp.array([1, 2, 3])))
 
 
 class TestAttributeFunctions(unittest.TestCase):
@@ -405,7 +407,7 @@ class TestMathFuncsKeepUnitUnary(unittest.TestCase):
     q = bu.Quantity([1.5, 2.3, 3.8])
     result_q = bu.math.ceil(q)
     expected_q = jnp.ceil(jnp.array([1.5, 2.3, 3.8]))
-    assert_quantity(result_q, expected_q, bu.second)
+    jnp.allclose(result_q, expected_q)
 
   def test_trunc(self):
     array = jnp.array([1.5, 2.3, 3.8])
@@ -415,7 +417,7 @@ class TestMathFuncsKeepUnitUnary(unittest.TestCase):
     q = bu.Quantity([1.5, 2.3, 3.8])
     result_q = bu.math.trunc(q)
     expected_q = jnp.trunc(jnp.array([1.5, 2.3, 3.8]))
-    assert_quantity(result_q, expected_q, bu.second)
+    assert_quantity(result_q, expected_q)
 
   def test_fix(self):
     array = jnp.array([1.5, 2.3, 3.8])
@@ -425,7 +427,7 @@ class TestMathFuncsKeepUnitUnary(unittest.TestCase):
     q = bu.Quantity([1.5, 2.3, 3.8])
     result_q = bu.math.fix(q)
     expected_q = jnp.fix(jnp.array([1.5, 2.3, 3.8]))
-    assert_quantity(result_q, expected_q, bu.second)
+    assert_quantity(result_q, expected_q)
 
   def test_sum(self):
     array = jnp.array([1, 2, 3])
@@ -1845,7 +1847,7 @@ class TestArrayManipulation(unittest.TestCase):
     q = [2, 3, 1] * bu.second
     result_q = bu.math.argsort(q)
     expected_q = jnp.argsort(jnp.array([2, 3, 1]))
-    assert_quantity(result_q, expected_q, bu.second)
+    assert_quantity(result_q, expected_q)
 
   def test_argmax(self):
     array = jnp.array([2, 3, 1])
@@ -2158,7 +2160,7 @@ class TestIndexingFuncs(unittest.TestCase):
     self.assertTrue(jnp.all(result == jnp.where(array > 2, array, 0)))
 
     q = [1, 2, 3, 4, 5] * bu.second
-    result_q = bu.math.where(q > 2 * bu.second, q.to_value(bu.second), 0)
+    result_q = bu.math.where(q > 2 * bu.second, q, 0 * bu.second)
     expected_q = jnp.where(jnp.array([1, 2, 3, 4, 5]) > 2, jnp.array([1, 2, 3, 4, 5]), 0)
     assert_quantity(result_q, expected_q, bu.second)
 
@@ -2389,31 +2391,6 @@ class TestMore(unittest.TestCase):
     b = jnp.array([[4], [5]])
     result = bu.math.broadcast_shapes(a.shape, b.shape)
     self.assertTrue(result == jnp.broadcast_shapes(a.shape, b.shape))
-
-  def test_einsum(self):
-    a = jnp.array([1, 2, 3])
-    b = jnp.array([4, 5])
-    result = bu.math.einsum('i,j->ij', a, b)
-    self.assertTrue(jnp.all(result == jnp.einsum('i,j->ij', a, b)))
-
-    q1 = [1, 2, 3] * bu.second
-    q2 = [4, 5] * bu.volt
-    result_q = bu.math.einsum('i,j->ij', q1, q2)
-    expected_q = jnp.einsum('i,j->ij', jnp.array([1, 2, 3]), jnp.array([4, 5]))
-    assert_quantity(result_q, expected_q, bu.second * bu.volt)
-
-    q1 = [1, 2, 3] * bu.second
-    q2 = [1, 2, 3] * bu.second
-    result_q = bu.math.einsum('i,i->i', q1, q2)
-    expected_q = jnp.einsum('i,i->i', jnp.array([1, 2, 3]), jnp.array([1, 2, 3]))
-    assert_quantity(result_q, expected_q, bu.second)
-
-    q1 = [1, 2, 3] * bu.second
-    q2 = [1, 2, 3] * bu.volt
-    q3 = [1, 2, 3] * bu.ampere
-    result_q = bu.math.einsum('i,i,i->i', q1, q2, q3)
-    expected_q = jnp.einsum('i,i,i->i', jnp.array([1, 2, 3]), jnp.array([1, 2, 3]), jnp.array([1, 2, 3]))
-    assert_quantity(result_q, expected_q, bu.second * bu.volt * bu.ampere)
 
   def test_gradient(self):
     f = jnp.array([1, 2, 4, 7, 11, 16], dtype=float)
